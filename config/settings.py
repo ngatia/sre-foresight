@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     kubernetes_watch_enabled: bool = False
     argocd_url: str | None = None
     argocd_token: str | None = None
+    argocd_insecure: bool = False
 
 
 @lru_cache
