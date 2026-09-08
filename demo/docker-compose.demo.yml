@@ -1,0 +1,15 @@
+services:
+  mock-prometheus:
+    build: { context: .., dockerfile: Dockerfile }
+    command: ["uvicorn", "demo.mock_prometheus:app", "--host", "0.0.0.0", "--port", "9090"]
+    ports: ["9090:9090"]
+  foresight:
+    build: { context: .. }
+    environment:
+      PROMETHEUS_URL: http://mock-prometheus:9090
+      DATABASE_URL: sqlite+aiosqlite:////app/data/foresight.db
+      SLO_CONFIG_PATH: /app/demo/slos.demo.yaml
+      POLL_INTERVAL_SECONDS: "10"
+    volumes: [ "./slos.demo.yaml:/app/demo/slos.demo.yaml:ro" ]
+    ports: ["8000:8000"]
+    depends_on: [mock-prometheus]

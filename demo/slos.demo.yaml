@@ -1,0 +1,9 @@
+slos:
+  - name: "Demo - Availability"
+    service: "demo"
+    target_percent: 99.0
+    window_days: 30
+    metric_query: "demo_good_ratio"
+    alert_thresholds:
+      warning_burn_rate: 2.0
+      critical_burn_rate: 10.0
