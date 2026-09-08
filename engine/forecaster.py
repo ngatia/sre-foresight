@@ -94,11 +94,19 @@ class ExhaustionForecaster:
             r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
             if a + c <= 0 or lam <= 0:
                 return None
+            # Guard against np.log returning NaN: (-c/a) must be positive
+            if -c / a <= 0:
+                return None
             t_zero = -np.log(-c / a) / lam
             remaining = max(0.0, t_zero - times[-1])
             ci = 1.96 * float(np.sqrt(np.diag(cov))[1]) * remaining
+            lower_ci = max(0.0, remaining - ci)
+            upper_ci = remaining + ci
+            # Verify finite values before returning
+            if not (np.isfinite(remaining) and np.isfinite(lower_ci) and np.isfinite(upper_ci)):
+                return None
             return {"hours_to_zero": remaining, "r2": r2,
-                    "lower_ci": max(0.0, remaining - ci), "upper_ci": remaining + ci}
+                    "lower_ci": lower_ci, "upper_ci": upper_ci}
         except Exception as e:  # noqa: BLE001
             logger.error("exponential fit failed: %s", e)
             return None

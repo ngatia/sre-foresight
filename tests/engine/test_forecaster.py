@@ -1,3 +1,4 @@
+import math
 from datetime import datetime, timezone, timedelta
 from engine.forecaster import ExhaustionForecaster, ExhaustionForecast
 
@@ -35,3 +36,38 @@ def test_linear_decline_predicts_known_zero():
 def test_returns_forecast_type():
     fc = ExhaustionForecaster.forecast(_samples([100, 90, 80, 70]))
     assert isinstance(fc, ExhaustionForecast)
+
+
+def test_exponential_decay_with_partial_self_healing():
+    # Exponential decay pattern: [100, 70, 55, 48, 45]
+    # This exhibits decay with diminishing rate of change (partial self-healing)
+    # which is typical of exponential models vs linear
+    fc = ExhaustionForecaster.forecast(_samples([100, 70, 55, 48, 45]))
+    assert fc.point_estimate_hours is not None
+    # Verify confidence interval bounds are properly ordered
+    assert fc.lower_ci_hours <= fc.point_estimate_hours <= fc.upper_ci_hours
+    # Verify point estimate is positive (budget exhaustion is in the future)
+    assert fc.point_estimate_hours > 0
+
+
+def test_declining_series_never_returns_nan():
+    # Regression test: any declining budget series should never produce NaN
+    # Test multiple declining patterns
+    test_patterns = [
+        [100, 90, 80, 70, 60],  # Linear
+        [100, 70, 55, 48, 45],  # Exponential-like
+        [100, 50, 30, 20, 15],  # Steep then plateau
+        [100, 95, 85, 70, 50],  # Variable decline
+    ]
+    for pattern in test_patterns:
+        fc = ExhaustionForecaster.forecast(_samples(pattern))
+        # Forecast should be returned (not None)
+        assert fc is not None, f"forecast() returned None for pattern {pattern}"
+        # If point_estimate exists, it must be finite
+        if fc.point_estimate_hours is not None:
+            assert math.isfinite(fc.point_estimate_hours), \
+                f"point_estimate_hours is NaN for pattern {pattern}"
+            assert math.isfinite(fc.lower_ci_hours), \
+                f"lower_ci_hours is NaN for pattern {pattern}"
+            assert math.isfinite(fc.upper_ci_hours), \
+                f"upper_ci_hours is NaN for pattern {pattern}"
