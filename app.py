@@ -9,10 +9,22 @@ from collectors.prometheus import PrometheusSource
 from config.settings import get_settings
 from config.slos import load_slos
 from db.base import init_db, make_engine, make_session_factory
+from events import argocd, kubernetes
 from events.base import ChangeEventStore
 from scheduler import evaluate_slo, run_scheduler
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def _log_task_exc(task: asyncio.Task) -> None:
+    """Done-callback that surfaces a background task's failure instead of
+    letting it be silently swallowed."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("background task %r failed", task.get_name(), exc_info=exc)
 
 
 def build() -> FastAPI:
@@ -36,21 +48,52 @@ def build() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await init_db(engine)
-        scheduler = run_scheduler(slos, source, session_factory, event_store, settings)
-        # replace jobs with the state-recording wrapper
-        scheduler.remove_all_jobs()
-        for slo in slos:
-            scheduler.add_job(_eval_and_record, "interval",
-                              seconds=settings.poll_interval_seconds, args=[slo],
-                              id=f"eval:{slo.name}", max_instances=1, coalesce=True)
+
+        # Single clean scheduling path: the interval jobs run the state-recording
+        # wrapper directly, no build-then-replace dance.
+        scheduler = run_scheduler(slos, _eval_and_record, settings.poll_interval_seconds)
         scheduler.start()
         app.state.scheduler = scheduler
-        # prime one evaluation so the dashboard is not empty
+
+        background: list[asyncio.Task] = []
+
+        # Prime one evaluation per SLO so the dashboard is not empty on startup.
         for slo in slos:
-            asyncio.create_task(_eval_and_record(slo))
+            t = asyncio.create_task(_eval_and_record(slo), name=f"prime:{slo.name}")
+            t.add_done_callback(_log_task_exc)
+            background.append(t)
+
+        # Optional adapters (opt-in; default config leaves both off). Each is
+        # wrapped so a failure is logged and never crashes startup.
+        if settings.kubernetes_watch_enabled:
+            async def _run_k8s_watch():
+                try:
+                    await kubernetes.watch_deployments(event_store, settings)
+                except Exception:
+                    logger.exception("kubernetes deployment watcher stopped")
+            k8s_task = asyncio.create_task(_run_k8s_watch(), name="k8s-watch")
+            k8s_task.add_done_callback(_log_task_exc)
+            background.append(k8s_task)
+
+        if settings.argocd_url and settings.argocd_token:
+            async def _run_argocd_poll():
+                try:
+                    await argocd.poll_loop(
+                        event_store, settings.argocd_url, settings.argocd_token,
+                        interval_seconds=60, verify=not settings.argocd_insecure,
+                    )
+                except Exception:
+                    logger.exception("argocd poll loop stopped")
+            argo_task = asyncio.create_task(_run_argocd_poll(), name="argocd-poll")
+            argo_task.add_done_callback(_log_task_exc)
+            background.append(argo_task)
+
+        app.state.background_tasks = background
         try:
             yield
         finally:
+            for t in background:
+                t.cancel()
             scheduler.shutdown(wait=False)
 
     app = create_app(session_factory, event_store, slos, latest_state)

@@ -1,9 +1,13 @@
 """Optional ArgoCD adapter: synced applications -> deploy ChangeEvents."""
+import asyncio
+import logging
 from datetime import UTC, datetime
 
 import httpx
 
-from events.base import ChangeEventInput
+from events.base import ChangeEventInput, ChangeEventStore
+
+logger = logging.getLogger(__name__)
 
 
 def argocd_app_to_change_event(app: dict) -> ChangeEventInput | None:
@@ -42,3 +46,28 @@ async def fetch_recent_deploys(
         apps = r.json().get("items", [])
     events = [argocd_app_to_change_event(a) for a in apps]
     return [e for e in events if e and e.occurred_at >= since]
+
+
+async def poll_loop(
+    store: ChangeEventStore,
+    argocd_url: str,
+    token: str,
+    *,
+    interval_seconds: int = 60,
+    verify: bool | str = True,
+) -> None:  # pragma: no cover - live glue
+    """Periodically poll ArgoCD for freshly synced apps and record them.
+
+    A single failure (network, auth, ArgoCD down) is logged and the loop
+    continues; it never raises out to the caller.
+    """
+    last = datetime.now(UTC)
+    while True:
+        try:
+            events = await fetch_recent_deploys(argocd_url, token, since=last, verify=verify)
+            for e in events:
+                await store.record(e)
+            last = datetime.now(UTC)
+        except Exception:
+            logger.exception("argocd poll failed")
+        await asyncio.sleep(interval_seconds)

@@ -136,15 +136,16 @@ async def _instant(source, slo):
         return None
 
 
-def run_scheduler(slos, source, session_factory, event_store, settings) -> AsyncIOScheduler:
+def run_scheduler(slos, job, poll_interval_seconds: int) -> AsyncIOScheduler:
+    """Build an AsyncIOScheduler that runs `job(slo)` for each SLO on an interval.
+
+    `job` is an async callable taking a single SLODefinition; the caller wires in
+    the source/session/event_store/notification config it needs.
+    """
     scheduler = AsyncIOScheduler(timezone="UTC")
     for slo in slos:
         scheduler.add_job(
-            evaluate_slo, "interval", seconds=settings.poll_interval_seconds,
-            args=[slo, source, session_factory, event_store],
-            kwargs=dict(notify_webhook_url=settings.notify_webhook_url,
-                        slack_webhook_url=settings.slack_webhook_url,
-                        postmortem_dir=settings.postmortem_dir),
+            job, "interval", seconds=poll_interval_seconds, args=[slo],
             id=f"eval:{slo.name}", max_instances=1, coalesce=True,
         )
     return scheduler
