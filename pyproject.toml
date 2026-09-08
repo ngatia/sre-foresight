@@ -26,6 +26,7 @@ dev = [
     "coverage>=7.5",
     "ruff>=0.5",
 ]
+kubernetes = ["kubernetes-asyncio>=30.0"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
