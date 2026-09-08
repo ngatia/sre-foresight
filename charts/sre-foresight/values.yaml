@@ -1,0 +1,36 @@
+image:
+  repository: ghcr.io/ngatia/sre-foresight
+  tag: ""            # defaults to .Chart.appVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+prometheus:
+  url: "http://prometheus:9090"
+
+pollIntervalSeconds: 60
+
+env: {}             # extra plain env vars
+secretEnv: {}       # rendered into a Secret (e.g. PROMETHEUS_TOKEN, SLACK_WEBHOOK_URL)
+
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+
+service:
+  port: 8000
+
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits: { cpu: 500m, memory: 512Mi }
+
+slos:
+  slos:
+    - name: "Example - Availability"
+      service: "example"
+      target_percent: 99.0
+      window_days: 30
+      metric_query: "avg_over_time(probe_success{instance='https://example.com'}[5m])"
+      alert_thresholds:
+        warning_burn_rate: 2.0
+        critical_burn_rate: 10.0

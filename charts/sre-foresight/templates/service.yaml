@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "sre-foresight.fullname" . }}
+spec:
+  selector:
+    app: {{ include "sre-foresight.fullname" . }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: 8000

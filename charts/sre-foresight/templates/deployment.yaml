@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sre-foresight.fullname" . }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "sre-foresight.fullname" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "sre-foresight.fullname" . }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: foresight
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+          env:
+            - name: PROMETHEUS_URL
+              value: {{ .Values.prometheus.url | quote }}
+            - name: POLL_INTERVAL_SECONDS
+              value: {{ .Values.pollIntervalSeconds | quote }}
+            - name: SLO_CONFIG_PATH
+              value: /app/config/slos.yaml
+            - name: DATABASE_URL
+              value: sqlite+aiosqlite:////app/data/foresight.db
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- if .Values.secretEnv }}
+          envFrom:
+            - secretRef:
+                name: {{ include "sre-foresight.fullname" . }}-env
+          {{- end }}
+          volumeMounts:
+            - name: slos
+              mountPath: /app/config/slos.yaml
+              subPath: slos.yaml
+            - name: data
+              mountPath: /app/data
+          livenessProbe:
+            httpGet: { path: /api/health, port: 8000 }
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet: { path: /api/health, port: 8000 }
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: slos
+          configMap:
+            name: {{ include "sre-foresight.fullname" . }}-slos
+        - name: data
+        {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "sre-foresight.fullname" . }}-data
+        {{- else }}
+          emptyDir: {}
+        {{- end }}
+{{- if .Values.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "sre-foresight.fullname" . }}-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+  {{- if .Values.persistence.storageClass }}
+  storageClassName: {{ .Values.persistence.storageClass }}
+  {{- end }}
+{{- end }}
