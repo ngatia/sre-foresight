@@ -1,0 +1,12 @@
+# Copy to config/slos.yaml and edit. Each SLI is a PromQL query returning a
+# ratio in [0,1] for availability SLOs, or a value compared to threshold_seconds
+# for latency SLOs.
+slos:
+  - name: "Example - Availability"
+    service: "example"
+    target_percent: 99.0
+    window_days: 30
+    metric_query: "avg_over_time(probe_success{instance='https://example.com'}[5m])"
+    alert_thresholds:
+      warning_burn_rate: 2.0
+      critical_burn_rate: 10.0
