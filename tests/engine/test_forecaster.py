@@ -1,10 +1,11 @@
 import math
-from datetime import datetime, timezone, timedelta
-from engine.forecaster import ExhaustionForecaster, ExhaustionForecast
+from datetime import UTC, datetime, timedelta
+
+from engine.forecaster import ExhaustionForecast, ExhaustionForecaster
 
 
 def _samples(values, start=None, step_min=60):
-    start = start or datetime(2026, 1, 1, tzinfo=timezone.utc)
+    start = start or datetime(2026, 1, 1, tzinfo=UTC)
 
     class S:  # minimal stand-in with the two attributes the forecaster reads
         def __init__(self, v, t):

@@ -1,11 +1,14 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
-from datetime import datetime, timezone, timedelta
-from db.base import make_engine, make_session_factory, init_db
-from db.models import BurnRateSample, AlertEvent
-from events.base import ChangeEventStore, ChangeEventInput
-from config.slos import SLODefinition
-import scheduler as sched
 from sqlalchemy import select
+
+import scheduler as sched
+from config.slos import SLODefinition
+from db.base import init_db, make_engine, make_session_factory
+from db.models import AlertEvent, BurnRateSample
+from events.base import ChangeEventInput, ChangeEventStore
+
 
 class FakeSource:
     def __init__(self, good): self._good = good
@@ -35,7 +38,7 @@ async def test_healthy_slo_persists_sample_no_alert(db):
 
 async def test_burning_slo_fires_alert_and_correlates(db, monkeypatch):
     store = ChangeEventStore(db)
-    spike = datetime.now(timezone.utc)
+    spike = datetime.now(UTC)
     await store.record(ChangeEventInput("resume", "deploy", "argocd",
                                         "deploy resume v2", spike - timedelta(minutes=2)))
     sent = {}

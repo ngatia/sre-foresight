@@ -6,7 +6,7 @@ standard error / the exponential covariance.
 """
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 from scipy import stats
@@ -39,7 +39,7 @@ class ExhaustionForecaster:
 
         if budgets[-1] >= budgets[0]:
             return ExhaustionForecast(None, None, None, "none", 0.0,
-                                      datetime.now(timezone.utc), len(samples))
+                                      datetime.now(UTC), len(samples))
 
         linear = ExhaustionForecaster._fit_linear(times, budgets)
         expo = ExhaustionForecaster._fit_exponential(times, budgets)
@@ -60,7 +60,7 @@ class ExhaustionForecaster:
             upper_ci_hours=selected["upper_ci"],
             model_used=name,
             confidence_score=selected["r2"],
-            forecasted_at=datetime.now(timezone.utc),
+            forecasted_at=datetime.now(UTC),
             sample_count=len(samples),
         )
 

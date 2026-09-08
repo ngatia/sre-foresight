@@ -1,11 +1,13 @@
-import pytest
-from datetime import datetime, timezone, timedelta
-from db.base import make_engine, make_session_factory, init_db
-from db.models import AlertEvent
-from events.base import ChangeEventStore, ChangeEventInput
-from config.slos import SLODefinition
-from scheduler import evaluate_slo
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy import select
+
+from config.slos import SLODefinition
+from db.base import init_db, make_engine, make_session_factory
+from db.models import AlertEvent
+from events.base import ChangeEventInput, ChangeEventStore
+from scheduler import evaluate_slo
+
 
 class DecliningSource:
     """Good-ratio well below target: forces a critical burn."""
@@ -21,7 +23,7 @@ async def test_demo_end_to_end(monkeypatch):
     await init_db(engine)
     sf = make_session_factory(engine)
     store = ChangeEventStore(sf)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await store.record(ChangeEventInput("demo", "deploy", "argocd",
                                         "deploy demo v9 (bad release)", now - timedelta(minutes=1)))
     import scheduler as sched

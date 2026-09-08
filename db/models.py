@@ -1,6 +1,8 @@
 from datetime import datetime
+
 from sqlalchemy import Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
+
 from db.base import Base, UTCDateTime
 
 
@@ -40,7 +42,9 @@ class CorrelationEvent(Base):
     __tablename__ = "correlation_events"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     alert_event_id: Mapped[int] = mapped_column(ForeignKey("alert_events.id"), index=True)
-    change_event_id: Mapped[int | None] = mapped_column(ForeignKey("change_events.id"), nullable=True)
+    change_event_id: Mapped[int | None] = mapped_column(
+        ForeignKey("change_events.id"), nullable=True
+    )
     event_time: Mapped[datetime] = mapped_column(UTCDateTime)
     event_type: Mapped[str] = mapped_column(String(32))
     source_system: Mapped[str] = mapped_column(String(64))

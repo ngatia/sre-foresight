@@ -1,11 +1,11 @@
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 
 from collectors.base import MetricsSource
-from config.slos import SLODefinition, load_slos
+from config.slos import SLODefinition
 from correlate.correlator import correlate
 from db.models import AlertEvent, BurnRateSample, CorrelationEvent
 from engine.burn_rate import budget_remaining_pct, compute_burn_rate
@@ -27,7 +27,7 @@ async def evaluate_slo(
     slack_webhook_url: str | None = None,
     postmortem_dir: str | None = None,
 ) -> dict:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     series_1h = await source.query_range(slo.metric_query, now - timedelta(hours=1), now, 300)
     good_1h = [v for _, v in series_1h] or [await _instant(source, slo)]
     good_1h = [g for g in good_1h if g is not None] or [1.0]

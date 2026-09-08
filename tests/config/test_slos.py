@@ -1,5 +1,6 @@
 import pytest
-from config.slos import load_slos, SLODefinition
+
+from config.slos import SLODefinition, load_slos
 
 FIX = "tests/config/fixtures/slos_valid.yaml"
 
@@ -14,7 +15,9 @@ def test_loads_valid():
 
 def test_missing_query_raises(tmp_path):
     p = tmp_path / "bad.yaml"
-    p.write_text("slos:\n  - name: x\n    service: x\n    target_percent: 99\n    window_days: 30\n")
+    p.write_text(
+        "slos:\n  - name: x\n    service: x\n    target_percent: 99\n    window_days: 30\n"
+    )
     with pytest.raises(ValueError, match="metric_query"):
         load_slos(str(p))
 

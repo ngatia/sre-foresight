@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+
 import yaml
 
 
@@ -46,7 +47,9 @@ def load_slos(path: str) -> list[SLODefinition]:
                 metric_query=e["metric_query"],
                 warning_burn_rate=float(thr.get("warning_burn_rate", 2.0)),
                 critical_burn_rate=float(thr.get("critical_burn_rate", 10.0)),
-                threshold_seconds=(float(e["threshold_seconds"]) if e.get("threshold_seconds") else None),
+                threshold_seconds=(
+                    float(e["threshold_seconds"]) if e.get("threshold_seconds") else None
+                ),
             )
         )
     return slos

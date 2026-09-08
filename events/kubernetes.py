@@ -5,7 +5,7 @@ kubernetes-asyncio; enable with KUBERNETES_WATCH_ENABLED=true and in-cluster RBA
 allowing watch on deployments. It is optional: the app works without it via the
 generic /api/events webhook.
 """
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from events.base import ChangeEventInput
 
@@ -24,7 +24,7 @@ def deployment_to_change_event(obj: dict, service_label: str = "app") -> ChangeE
         event_type="deploy",
         source_system="kubernetes",
         description=f"Deploy {meta.get('name')} (rev {revision}) in {ns}",
-        occurred_at=datetime.now(timezone.utc),
+        occurred_at=datetime.now(UTC),
         metadata={"namespace": ns, "generation": gen, "revision": revision},
     )
 

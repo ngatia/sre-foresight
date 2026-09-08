@@ -1,10 +1,12 @@
+from datetime import UTC, datetime
+
 import pytest
-from datetime import datetime, timezone
-from httpx import AsyncClient, ASGITransport
-from db.base import make_engine, make_session_factory, init_db
-from events.base import ChangeEventStore
-from config.slos import SLODefinition
+from httpx import ASGITransport, AsyncClient
+
 from api.main import create_app
+from config.slos import SLODefinition
+from db.base import init_db, make_engine, make_session_factory
+from events.base import ChangeEventStore
 
 SLO = SLODefinition("Resume - Availability", "resume", 99.0, 30, "q")
 
@@ -14,7 +16,11 @@ async def client():
     engine = make_engine("sqlite+aiosqlite:///:memory:")
     await init_db(engine)
     sf = make_session_factory(engine)
-    state = {"Resume - Availability": {"slo": "Resume - Availability", "budget_remaining_pct": 100.0}}
+    state = {
+        "Resume - Availability": {
+            "slo": "Resume - Availability", "budget_remaining_pct": 100.0
+        }
+    }
     app = create_app(sf, ChangeEventStore(sf), [SLO], state)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://t") as c:
@@ -35,7 +41,7 @@ async def test_slos_returns_state(client):
 async def test_event_ingest_valid(client):
     r = await client.post("/api/events", json={
         "service": "resume", "event_type": "deploy", "source": "argocd",
-        "description": "deploy v2", "timestamp": datetime.now(timezone.utc).isoformat(),
+        "description": "deploy v2", "timestamp": datetime.now(UTC).isoformat(),
     })
     assert r.status_code == 202
 

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -25,15 +25,15 @@ async def _round_trip(sampled_at: datetime) -> datetime:
 async def test_naive_datetime_round_trips_as_utc():
     naive = datetime(2026, 9, 8, 12, 0, 0)
     result = await _round_trip(naive)
-    assert result.tzinfo == timezone.utc
-    assert result == naive.replace(tzinfo=timezone.utc)
+    assert result.tzinfo == UTC
+    assert result == naive.replace(tzinfo=UTC)
 
 
 async def test_non_utc_aware_datetime_round_trips_as_same_instant_in_utc():
     plus_five = timezone(timedelta(hours=5))
     aware = datetime(2026, 9, 8, 17, 0, 0, tzinfo=plus_five)
     result = await _round_trip(aware)
-    assert result.tzinfo == timezone.utc
-    assert result == aware.astimezone(timezone.utc)
+    assert result.tzinfo == UTC
+    assert result == aware.astimezone(UTC)
     # 17:00+05:00 is 12:00 UTC
-    assert result == datetime(2026, 9, 8, 12, 0, 0, tzinfo=timezone.utc)
+    assert result == datetime(2026, 9, 8, 12, 0, 0, tzinfo=UTC)

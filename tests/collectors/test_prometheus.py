@@ -1,6 +1,8 @@
+from datetime import UTC, datetime, timedelta
+
 import respx
-from datetime import datetime, timezone, timedelta
 from httpx import Response
+
 from collectors.prometheus import PrometheusSource
 
 BASE = "http://prom:9090"
@@ -34,7 +36,7 @@ async def test_query_range_parses_pairs():
         ]},
     }))
     src = PrometheusSource(BASE)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     pairs = await src.query_range("up", now - timedelta(minutes=5), now, 60)
     assert [v for _, v in pairs] == [0.99, 0.98]
     assert all(ts.tzinfo is not None for ts, _ in pairs)

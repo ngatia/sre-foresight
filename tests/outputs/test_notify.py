@@ -2,6 +2,7 @@ import logging
 
 import respx
 from httpx import Response
+
 from outputs.notify import Notification, _slack_text, send
 
 N = Notification("Resume - Availability", "resume", "critical", 12.0, 8.0, 4.2,

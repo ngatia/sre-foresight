@@ -1,4 +1,5 @@
-from engine.burn_rate import compute_burn_rate, budget_remaining_pct
+from engine.burn_rate import budget_remaining_pct, compute_burn_rate
+
 
 def test_burn_rate_at_target_is_one():
     # target 99% => allowed error 1%. observed error 1% => burn rate 1.0

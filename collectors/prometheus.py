@@ -1,5 +1,7 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 import httpx
+
 from collectors.base import MetricsSource
 
 
@@ -41,6 +43,6 @@ class PrometheusSource(MetricsSource):
             if not result:
                 return []
             return [
-                (datetime.fromtimestamp(float(ts), tz=timezone.utc), float(v))
+                (datetime.fromtimestamp(float(ts), tz=UTC), float(v))
                 for ts, v in result[0]["values"]
             ]

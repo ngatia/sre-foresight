@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from correlate.correlator import CorrelationResult
 from outputs.postmortem import render_postmortem, write_postmortem
 
@@ -15,7 +16,7 @@ def test_render_contains_key_sections():
 def test_write_creates_file(tmp_path):
     md = render_postmortem("Resume - Availability", "resume", "critical", 12.0, 8.0, 4.2, CORR)
     path = write_postmortem(md, str(tmp_path), "Resume - Availability",
-                            datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc))
+                            datetime(2026, 1, 1, 12, 0, tzinfo=UTC))
     assert path.endswith("resume-availability-20260101-1200.md")
     with open(path) as f:
         assert "# Postmortem" in f.read()
