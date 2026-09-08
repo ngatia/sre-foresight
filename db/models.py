@@ -1,7 +1,7 @@
 from datetime import datetime
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
-from db.base import Base
+from db.base import Base, UTCDateTime
 
 
 class BurnRateSample(Base):
@@ -12,7 +12,7 @@ class BurnRateSample(Base):
     budget_remaining_pct: Mapped[float] = mapped_column(Float)
     burn_rate_1h: Mapped[float] = mapped_column(Float)
     burn_rate_6h: Mapped[float] = mapped_column(Float)
-    sampled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    sampled_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
 
 
 class AlertEvent(Base):
@@ -22,7 +22,7 @@ class AlertEvent(Base):
     service: Mapped[str] = mapped_column(String(255), index=True)
     severity: Mapped[str] = mapped_column(String(32))
     burn_rate: Mapped[float] = mapped_column(Float)
-    fired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    fired_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
 
 
 class ChangeEvent(Base):
@@ -32,7 +32,7 @@ class ChangeEvent(Base):
     event_type: Mapped[str] = mapped_column(String(32))  # "deploy" | "pipeline"
     source_system: Mapped[str] = mapped_column(String(64))
     description: Mapped[str] = mapped_column(Text)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    occurred_at: Mapped[datetime] = mapped_column(UTCDateTime, index=True)
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -41,7 +41,7 @@ class CorrelationEvent(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     alert_event_id: Mapped[int] = mapped_column(ForeignKey("alert_events.id"), index=True)
     change_event_id: Mapped[int | None] = mapped_column(ForeignKey("change_events.id"), nullable=True)
-    event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    event_time: Mapped[datetime] = mapped_column(UTCDateTime)
     event_type: Mapped[str] = mapped_column(String(32))
     source_system: Mapped[str] = mapped_column(String(64))
     description: Mapped[str] = mapped_column(Text)

@@ -48,3 +48,16 @@ async def test_failed_webhook_does_not_log_secret_path(caplog):
     assert "super-secret-token" not in logged
     assert "T00/B00" not in logged
     assert "http://hook" in logged
+
+
+@respx.mock
+async def test_failed_webhook_does_not_log_userinfo(caplog):
+    creds_url = "http://user:pass@hookhost/path"
+    respx.post(creds_url).mock(return_value=Response(500))
+    with caplog.at_level(logging.WARNING):
+        await send(N, webhook_url=creds_url, slack_webhook_url=None)
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "user" not in logged
+    assert "pass" not in logged
+    assert "/path" not in logged
+    assert "hookhost" in logged

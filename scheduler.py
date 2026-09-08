@@ -76,13 +76,6 @@ async def evaluate_slo(
 
     changes = await event_store.recent_for_service(
         slo.service, now - timedelta(minutes=30), now + timedelta(minutes=5))
-    # SQLite drops tzinfo on round-trip (DateTime(timezone=True) is not enforced
-    # by the sqlite dialect), so timestamps read back from a fresh session come
-    # back naive even though the store always writes UTC. Reattach UTC here at
-    # the wiring boundary rather than comparing naive vs. aware downstream.
-    for change in changes:
-        if change.occurred_at.tzinfo is None:
-            change.occurred_at = change.occurred_at.replace(tzinfo=timezone.utc)
     corr = correlate(changes, now)
     out.update(severity=severity, probable_cause=corr.probable_cause,
                probable_cause_type=corr.probable_cause_type)

@@ -24,9 +24,17 @@ def _mrkdwn_escape(s: str) -> str:
 
 
 def _redacted_target(url: str) -> str:
-    """Return scheme://netloc only, dropping any path/query that may hold secrets."""
+    """Return scheme://host[:port] only, dropping userinfo, path, and query.
+
+    urlparse's netloc includes any `user:pass@` userinfo, which would leak
+    basic-auth credentials into logs. Build the host from parsed.hostname
+    instead, which never includes userinfo.
+    """
     parsed = urllib.parse.urlparse(url)
-    return f"{parsed.scheme}://{parsed.netloc}"
+    host = parsed.hostname or ""
+    if parsed.port is not None:
+        host = f"{host}:{parsed.port}"
+    return f"{parsed.scheme}://{host}"
 
 
 def _log_webhook_failure(label: str, url: str, e: Exception) -> None:
