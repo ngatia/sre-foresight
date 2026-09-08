@@ -1,0 +1,15 @@
+services:
+  foresight:
+    build: .
+    image: ghcr.io/ngatia/sre-foresight:dev
+    ports:
+      - "8000:8000"
+    environment:
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://prometheus:9090}
+      DATABASE_URL: sqlite+aiosqlite:////app/data/foresight.db
+      SLO_CONFIG_PATH: /app/config/slos.yaml
+    volumes:
+      - ./config/slos.yaml:/app/config/slos.yaml:ro
+      - foresight-data:/app/data
+volumes:
+  foresight-data:
