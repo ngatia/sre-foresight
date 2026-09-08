@@ -29,14 +29,35 @@ async def evaluate_slo(
 ) -> dict:
     now = datetime.now(UTC)
     series_1h = await source.query_range(slo.metric_query, now - timedelta(hours=1), now, 300)
-    good_1h = [v for _, v in series_1h] or [await _instant(source, slo)]
-    good_1h = [g for g in good_1h if g is not None] or [1.0]
+    good_1h = [v for _, v in series_1h]
+    if not good_1h:
+        instant = await _instant(source, slo)
+        if instant is not None:
+            good_1h = [instant]
+    good_1h = [g for g in good_1h if g is not None]
+
+    # Fail closed on missing data: an SLI that returns no series must NOT read as
+    # 100% healthy. Skip the sample entirely (no persistence, no alert) and mark
+    # the result "no_data" so the caller/dashboard can show it as stale, not green.
+    if not good_1h:
+        logger.warning("no data for SLO %s, skipping sample", slo.name)
+        return {
+            "slo": slo.name, "service": slo.service, "status": "no_data",
+            "budget_remaining_pct": None, "burn_rate_1h": None, "burn_rate_6h": None,
+            "forecast_hours": None, "forecast_lower_hours": None,
+            "forecast_upper_hours": None, "forecast_model": None,
+            "forecast_confidence": None, "latest_good": None,
+            "severity": None, "probable_cause": None, "probable_cause_type": None,
+        }
 
     latest_good = good_1h[-1]
     burn_1h = compute_burn_rate(sum(good_1h) / len(good_1h), slo.target_percent)
     series_6h = await source.query_range(slo.metric_query, now - timedelta(hours=6), now, 300)
     good_6h = [v for _, v in series_6h] or good_1h
     burn_6h = compute_burn_rate(sum(good_6h) / len(good_6h), slo.target_percent)
+    # NOTE: v1 approximates error-budget-remaining from this recent rolling window
+    # (~6h), not the full declared slo.window_days horizon. A fuller windowed
+    # budget is planned; see README "How it works".
     budget = budget_remaining_pct(good_6h, slo.target_percent)
 
     async with session_factory() as s:
@@ -51,11 +72,20 @@ async def evaluate_slo(
 
     forecast = ExhaustionForecaster.forecast(list(reversed(recent)))
     forecast_hours = forecast.point_estimate_hours if forecast else None
+    forecast_lower_hours = forecast.lower_ci_hours if forecast else None
+    forecast_upper_hours = forecast.upper_ci_hours if forecast else None
+    forecast_model = forecast.model_used if forecast else None
+    forecast_confidence = forecast.confidence_score if forecast else None
 
     out = {
-        "slo": slo.name, "service": slo.service, "budget_remaining_pct": budget,
+        "slo": slo.name, "service": slo.service, "status": "ok",
+        "budget_remaining_pct": budget,
         "burn_rate_1h": burn_1h, "burn_rate_6h": burn_6h,
-        "forecast_hours": forecast_hours, "latest_good": latest_good,
+        "forecast_hours": forecast_hours,
+        "forecast_lower_hours": forecast_lower_hours,
+        "forecast_upper_hours": forecast_upper_hours,
+        "forecast_model": forecast_model, "forecast_confidence": forecast_confidence,
+        "latest_good": latest_good,
         "severity": None, "probable_cause": None, "probable_cause_type": None,
     }
 
