@@ -202,6 +202,7 @@ Chart-only values (no env var equivalent, see `charts/sre-foresight/values.yaml`
 | `imagePullSecrets` | `[]` | Pull secrets for a private registry. |
 | `env` | `{}` | Extra plain (non-secret) env vars, merged into the container. |
 | `secretEnv` | `{}` | Extra secret env vars (e.g. tokens/webhook URLs), rendered into a Kubernetes `Secret` and injected via `envFrom`. |
+| `extraEnvFrom` | `[]` | Extra `envFrom` entries injected into the container, e.g. `[{secretRef: {name: my-sealed-secret}}]`, to pull env from a Secret the chart does not manage (a SealedSecret, external-secrets, etc.). Keeps credentials out of chart values. |
 | `persistence.enabled` / `persistence.size` / `persistence.storageClass` | `true` / `1Gi` / `""` | PVC for the SQLite data directory. The chart hardcodes `DATABASE_URL` to that SQLite path and does not currently expose a Postgres override - use `docker compose` or a bare-metal run with `DATABASE_URL` set if you need Postgres. |
 | `service.port` | `8000` | Service port. |
 | `resources` | `100m/256Mi` requests, `500m/512Mi` limits | Container resource requests/limits. |
