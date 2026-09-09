@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "sre-foresight"
 version = "0.1.0"
@@ -27,6 +31,14 @@ dev = [
     "ruff>=0.5",
 ]
 kubernetes = ["kubernetes-asyncio>=30.0"]
+
+# This is an application (run via docker/uvicorn), not an importable library.
+# `pip install -e ".[dev]"` exists only to install dependencies for CI/dev;
+# tests import the flat-layout modules via pytest's `pythonpath = ["."]`.
+# Declaring no packages disables setuptools flat-layout auto-discovery, which
+# otherwise fails with "Multiple top-level packages discovered".
+[tool.setuptools]
+py-modules = []
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
