@@ -1,5 +1,8 @@
 # SRE Foresight
 
+[![ci](https://github.com/ngatia/sre-foresight/actions/workflows/ci.yml/badge.svg)](https://github.com/ngatia/sre-foresight/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 **Grafana tells you the house is on fire. SRE Foresight tells you which room
 started it, how long until it burns down, and hands you the fire report while
 you are still fighting it.**
