@@ -51,23 +51,28 @@ def test_exponential_decay_with_partial_self_healing():
     assert fc.point_estimate_hours > 0
 
 
-def test_declining_series_never_returns_nan():
-    # Regression test: any declining budget series should never produce NaN
-    # Test multiple declining patterns
+def test_declining_series_never_returns_degenerate_zero():
+    # Regression test with real teeth. The exponential-decay pattern
+    # [100, 70, 55, 48, 45] pre-fix produced a degenerate point_estimate of 0.0
+    # ("already exhausted") even though the budget is still 45% - well above 0.
+    # A plain isfinite() check does NOT catch that (0.0 is finite), so every
+    # pattern here ends with budget well above 0 and we require the forecaster
+    # to return EITHER None (no usable downward fit) OR a finite estimate
+    # strictly > 0 - never a bogus 0.0.
     test_patterns = [
         [100, 90, 80, 70, 60],  # Linear
-        [100, 70, 55, 48, 45],  # Exponential-like
+        [100, 70, 55, 48, 45],  # Exponential-like (the pre-fix 0.0 offender)
         [100, 50, 30, 20, 15],  # Steep then plateau
         [100, 95, 85, 70, 50],  # Variable decline
     ]
     for pattern in test_patterns:
         fc = ExhaustionForecaster.forecast(_samples(pattern))
-        # Forecast should be returned (not None)
+        # Forecast should be returned (not None) for a clearly declining series.
         assert fc is not None, f"forecast() returned None for pattern {pattern}"
-        # If point_estimate exists, it must be finite
         if fc.point_estimate_hours is not None:
-            assert math.isfinite(fc.point_estimate_hours), \
-                f"point_estimate_hours is NaN for pattern {pattern}"
+            # Finite (no NaN/inf) AND not the degenerate already-exhausted 0.0.
+            assert math.isfinite(fc.point_estimate_hours) and fc.point_estimate_hours > 0, \
+                f"bogus point_estimate {fc.point_estimate_hours} for pattern {pattern}"
             assert math.isfinite(fc.lower_ci_hours), \
                 f"lower_ci_hours is NaN for pattern {pattern}"
             assert math.isfinite(fc.upper_ci_hours), \

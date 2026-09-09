@@ -12,9 +12,16 @@ from db.models import ChangeEvent
 class ChangeEventInput:
     """A deploy/pipeline occurrence.
 
-    Canonical webhook JSON:
-      {"service", "event_type": "deploy"|"pipeline", "source",
-       "description", "timestamp": ISO8601, "metadata": {}}
+    Canonical webhook JSON (POST /api/events), a valid JSON object where
+    "event_type" is "deploy" or "pipeline" and "metadata" is optional:
+      {
+        "service": "checkout-api",
+        "event_type": "deploy",
+        "source": "argocd",
+        "description": "deploy checkout-api v42",
+        "timestamp": "2026-09-08T14:03:00Z",
+        "metadata": {"revision": "abc1234"}
+      }
     """
     service: str
     event_type: str
