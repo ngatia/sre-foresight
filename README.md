@@ -181,6 +181,8 @@ when deploying with the chart in `charts/sre-foresight`.
 |---|---|---|---|
 | `PROMETHEUS_URL` | `prometheus.url` | `http://localhost:9090` | Prometheus-compatible query endpoint. Required for real use. |
 | `PROMETHEUS_TOKEN` | via `secretEnv.PROMETHEUS_TOKEN` | unset | Bearer token for the Prometheus endpoint, if it requires auth. |
+| `PROMETHEUS_USERNAME` | via `secretEnv.PROMETHEUS_USERNAME` | unset | Basic-auth username for the Prometheus endpoint (e.g. a Grafana Cloud instance ID). Used together with `PROMETHEUS_PASSWORD`; takes precedence over `PROMETHEUS_TOKEN` when both are set. |
+| `PROMETHEUS_PASSWORD` | via `secretEnv.PROMETHEUS_PASSWORD` | unset | Basic-auth password for the Prometheus endpoint (e.g. a Grafana Cloud metrics:read token). |
 | `DATABASE_URL` | n/a - chart always uses the mounted SQLite path | `sqlite+aiosqlite:///./data/foresight.db` | SQLAlchemy async URL. Set to a `postgresql+asyncpg://...` URL to use Postgres instead. |
 | `SLO_CONFIG_PATH` | n/a - chart always mounts the ConfigMap at `/app/config/slos.yaml` | `config/slos.yaml` | Path to the SLO YAML file. Not shipped by default - copy `config/slos.example.yaml` first. |
 | `POLL_INTERVAL_SECONDS` | `pollIntervalSeconds` | `60` | Seconds between evaluations of each SLO. |
@@ -200,6 +202,7 @@ Chart-only values (no env var equivalent, see `charts/sre-foresight/values.yaml`
 | `imagePullSecrets` | `[]` | Pull secrets for a private registry. |
 | `env` | `{}` | Extra plain (non-secret) env vars, merged into the container. |
 | `secretEnv` | `{}` | Extra secret env vars (e.g. tokens/webhook URLs), rendered into a Kubernetes `Secret` and injected via `envFrom`. |
+| `extraEnvFrom` | `[]` | Extra `envFrom` entries injected into the container, e.g. `[{secretRef: {name: my-sealed-secret}}]`, to pull env from a Secret the chart does not manage (a SealedSecret, external-secrets, etc.). Keeps credentials out of chart values. |
 | `persistence.enabled` / `persistence.size` / `persistence.storageClass` | `true` / `1Gi` / `""` | PVC for the SQLite data directory. The chart hardcodes `DATABASE_URL` to that SQLite path and does not currently expose a Postgres override - use `docker compose` or a bare-metal run with `DATABASE_URL` set if you need Postgres. |
 | `service.port` | `8000` | Service port. |
 | `resources` | `100m/256Mi` requests, `500m/512Mi` limits | Container resource requests/limits. |

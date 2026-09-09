@@ -1,3 +1,4 @@
+import base64
 from datetime import UTC, datetime, timedelta
 
 import respx
@@ -40,3 +41,47 @@ async def test_query_range_parses_pairs():
     pairs = await src.query_range("up", now - timedelta(minutes=5), now, 60)
     assert [v for _, v in pairs] == [0.99, 0.98]
     assert all(ts.tzinfo is not None for ts, _ in pairs)
+
+@respx.mock
+async def test_query_instant_uses_basic_auth_when_username_and_password_set():
+    route = respx.get(f"{BASE}/api/v1/query").mock(return_value=Response(200, json={
+        "status": "success",
+        "data": {"resultType": "vector", "result": [
+            {"metric": {}, "value": [1700000000, "0.995"]}
+        ]},
+    }))
+    src = PrometheusSource(BASE, username="grafana-instance-id", password="glc_token")
+    val = await src.query_instant("up")
+    assert abs(val - 0.995) < 1e-9
+
+    sent_request = route.calls.last.request
+    expected = base64.b64encode(b"grafana-instance-id:glc_token").decode()
+    assert sent_request.headers["Authorization"] == f"Basic {expected}"
+
+@respx.mock
+async def test_query_range_uses_basic_auth_when_username_and_password_set():
+    route = respx.get(f"{BASE}/api/v1/query_range").mock(return_value=Response(200, json={
+        "status": "success",
+        "data": {"resultType": "matrix", "result": [
+            {"metric": {}, "values": [[1700000000, "0.99"]]}
+        ]},
+    }))
+    src = PrometheusSource(BASE, username="grafana-instance-id", password="glc_token")
+    now = datetime.now(UTC)
+    await src.query_range("up", now - timedelta(minutes=5), now, 60)
+
+    sent_request = route.calls.last.request
+    expected = base64.b64encode(b"grafana-instance-id:glc_token").decode()
+    assert sent_request.headers["Authorization"] == f"Basic {expected}"
+
+@respx.mock
+async def test_basic_auth_takes_precedence_over_bearer_token():
+    route = respx.get(f"{BASE}/api/v1/query").mock(return_value=Response(200, json={
+        "status": "success", "data": {"resultType": "vector", "result": []},
+    }))
+    src = PrometheusSource(BASE, token="should-be-ignored", username="user", password="pass")
+    await src.query_instant("up")
+
+    sent_request = route.calls.last.request
+    expected = base64.b64encode(b"user:pass").decode()
+    assert sent_request.headers["Authorization"] == f"Basic {expected}"

@@ -32,7 +32,12 @@ def build() -> FastAPI:
     engine = make_engine(settings.database_url)
     session_factory = make_session_factory(engine)
     slos = load_slos(settings.slo_config_path)
-    source = PrometheusSource(settings.prometheus_url, settings.prometheus_token)
+    source = PrometheusSource(
+        settings.prometheus_url,
+        settings.prometheus_token,
+        username=settings.prometheus_username,
+        password=settings.prometheus_password,
+    )
     event_store = ChangeEventStore(session_factory)
     latest_state: dict = {}
 

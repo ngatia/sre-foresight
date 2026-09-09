@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/foresight.db"
     prometheus_url: str = "http://localhost:9090"
     prometheus_token: str | None = None
+    prometheus_username: str | None = None
+    prometheus_password: str | None = None
     slo_config_path: str = "config/slos.yaml"
     poll_interval_seconds: int = 60
 
