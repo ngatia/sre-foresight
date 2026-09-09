@@ -61,7 +61,10 @@ Every SLO is evaluated on a fixed loop, once per `POLL_INTERVAL_SECONDS`
    get a recent "fraction good" ratio.
 2. **Compute burn rate and budget.** The 1h and 6h ratios are converted into
    multi-window burn rates against `target_percent`, and the remaining error
-   budget (as a percentage) is computed from the 6h window.
+   budget (as a percentage) is computed from the 6h window. Note: v1
+   approximates error-budget-remaining from this recent rolling window (~6h),
+   not the full declared `window_days` horizon; a fuller windowed budget over
+   the whole `window_days` span is planned.
 3. **Persist a sample.** The budget and burn rates are written to the
    `BurnRateSample` table, timestamped, so history accumulates run over run.
 4. **Forecast exhaustion.** The last 24 samples for that SLO are fit with both
@@ -136,6 +139,19 @@ any Prometheus-compatible source
 ([ADR 0001](docs/adr/0001-prometheus-as-sole-metrics-interface.md)). State lives
 in SQLite by default, Postgres optionally
 ([ADR 0002](docs/adr/0002-sqlite-default-postgres-optional.md)).
+
+Every `metric_query` is treated as a **good-ratio SLI**: it must return a value
+in `[0,1]` (the fraction of events that were "good"). This applies to latency
+SLOs too - express a latency SLO as a ratio query (the fraction of requests
+faster than your threshold, e.g.
+`sum(rate(..._bucket{le="0.5"}[5m])) / sum(rate(..._count[5m]))`), not as a raw
+latency value. `threshold_seconds` is an optional advisory/display field only;
+v1 does not compare any query against it, so keep the threshold inside the
+ratio query itself.
+
+`window_days` records the intended SLO horizon, but as noted in
+[How it works](#how-it-works) v1 approximates the remaining error budget from a
+recent rolling window rather than the full `window_days` span.
 
 Everything below is set via environment variables (see `.env.example`) when
 running directly or with `docker compose`, or via the equivalent Helm value
