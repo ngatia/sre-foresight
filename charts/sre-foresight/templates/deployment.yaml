@@ -34,10 +34,14 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+          {{- $envFrom := list }}
           {{- if .Values.secretEnv }}
+          {{- $envFrom = append $envFrom (dict "secretRef" (dict "name" (printf "%s-env" (include "sre-foresight.fullname" .)))) }}
+          {{- end }}
+          {{- $envFrom = concat $envFrom .Values.extraEnvFrom }}
+          {{- if $envFrom }}
           envFrom:
-            - secretRef:
-                name: {{ include "sre-foresight.fullname" . }}-env
+            {{- toYaml $envFrom | nindent 12 }}
           {{- end }}
           volumeMounts:
             - name: slos

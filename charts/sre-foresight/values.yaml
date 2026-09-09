@@ -11,6 +11,7 @@ pollIntervalSeconds: 60
 
 env: {}             # extra plain env vars
 secretEnv: {}       # rendered into a Secret (e.g. PROMETHEUS_TOKEN, SLACK_WEBHOOK_URL)
+extraEnvFrom: []    # extra envFrom entries, e.g. [{secretRef: {name: my-secret}}] to inject env from an existing/sealed Secret
 
 persistence:
   enabled: true
