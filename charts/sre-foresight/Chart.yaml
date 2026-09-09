@@ -1,0 +1,6 @@
+apiVersion: v2
+name: sre-foresight
+description: Forecast SLO error-budget exhaustion and correlate burn spikes to their cause.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

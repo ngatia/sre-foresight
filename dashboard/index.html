@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>SRE Foresight</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"
+        integrity="sha512-CQBWl4fJHWbryGE+Pc7UAxWMUMNMWzWxF4SQo9CgkJIN1kx6djDQZjh3Y8SZ1d+6I+1zze6Z7kHXO7q3UyZAWw=="
+        crossorigin="anonymous"
+        referrerpolicy="no-referrer"></script>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#0b0f14; color:#e6edf3; font:14px system-ui,sans-serif; }
+  header { padding:16px 24px; border-bottom:1px solid #1c2530; font-weight:600; font-size:18px; }
+  main { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:24px; }
+  .card { background:#111721; border:1px solid #1c2530; border-radius:10px; padding:16px; }
+  table { width:100%; border-collapse:collapse; }
+  th,td { text-align:left; padding:8px; border-bottom:1px solid #1c2530; }
+  .bar { height:8px; background:#1c2530; border-radius:4px; overflow:hidden; }
+  .bar>span { display:block; height:100%; background:#3fb950; }
+  .chip { padding:2px 8px; border-radius:12px; font-size:12px; }
+  .warn { background:#9e6a03; } .crit { background:#b62324; } .ok { background:#238636; }
+  .full { grid-column:1 / -1; }
+  .muted { color:#8b949e; }
+  .alert-row { padding:6px 0; border-bottom:1px solid #1c2530; }
+  .alert-row:last-child { border-bottom:none; }
+  .cause-line { display:block; margin-top:4px; }
+</style>
+</head>
+<body>
+<header>SRE Foresight - reliability foresight</header>
+<main>
+  <section class="card full">
+    <h3>Service Level Objectives</h3>
+    <table id="slo-table"><thead><tr>
+      <th>SLO</th><th>Budget remaining</th><th>1h burn</th><th>Forecast</th><th>Probable cause</th>
+    </tr></thead><tbody></tbody></table>
+  </section>
+  <section class="card">
+    <h3>Forecast cone <span id="sel" class="muted"></span></h3>
+    <canvas id="forecast"></canvas>
+  </section>
+  <section class="card">
+    <h3>Alerts &amp; probable cause</h3>
+    <div id="alerts"></div>
+  </section>
+</main>
+<script>
+(function () {
+  'use strict';
+
+  // All values below that originate from the API (SLO names, severities,
+  // probable_cause, alert fields, numbers) are attacker-influenceable --
+  // probable_cause in particular is derived from the description field of
+  // the public POST /api/events webhook. Every such value is written with
+  // .textContent (or a DOM property, never innerHTML) so it can never be
+  // parsed as markup. Only the static chrome above is literal HTML.
+
+  let chart = null;
+  let selected = null;
+  let lastSlos = []; // most recent /api/slos payload, for forecast-cone fields
+
+  function chipClass(sev) {
+    return sev === 'critical' ? 'crit' : sev === 'warning' ? 'warn' : 'ok';
+  }
+
+  function makeEl(tag, opts) {
+    const e = document.createElement(tag);
+    if (opts) {
+      if (opts.className) e.className = opts.className;
+      if (opts.text !== undefined) e.textContent = opts.text;
+    }
+    return e;
+  }
+
+  function num(n) {
+    return Number.isFinite(Number(n)) ? Number(n) : 0;
+  }
+
+  function fmt1(n) {
+    return num(n).toFixed(1);
+  }
+
+  async function fetchJSON(url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('request failed: ' + url + ' (' + res.status + ')');
+    return res.json();
+  }
+
+  function clearChildren(node) {
+    node.textContent = '';
+  }
+
+  function buildSloRow(s) {
+    const tr = document.createElement('tr');
+
+    const tdName = document.createElement('td');
+    const a = document.createElement('a');
+    a.href = '#';
+    a.dataset.slo = s.slo;
+    a.textContent = s.slo; // API value -> textContent, never innerHTML
+    tdName.appendChild(a);
+    tr.appendChild(tdName);
+
+    const tdBudget = document.createElement('td');
+    const bar = makeEl('div', { className: 'bar' });
+    const span = document.createElement('span');
+    const pct = Math.max(0, Math.min(100, num(s.budget_remaining_pct)));
+    span.style.width = pct + '%';
+    bar.appendChild(span);
+    tdBudget.appendChild(bar);
+    tdBudget.appendChild(makeEl('small', { className: 'muted', text: fmt1(s.budget_remaining_pct) + '%' }));
+    tr.appendChild(tdBudget);
+
+    const tdBurn = document.createElement('td');
+    tdBurn.appendChild(makeEl('span', {
+      className: 'chip ' + chipClass(s.severity || 'ok'),
+      text: fmt1(s.burn_rate_1h) + 'x',
+    }));
+    tr.appendChild(tdBurn);
+
+    const tdForecast = document.createElement('td');
+    tdForecast.textContent = s.forecast_hours ? ('~' + num(s.forecast_hours).toFixed(1) + 'h') : '-';
+    tr.appendChild(tdForecast);
+
+    const tdCause = document.createElement('td');
+    tdCause.className = 'muted';
+    tdCause.textContent = s.probable_cause ? s.probable_cause : '-';
+    tr.appendChild(tdCause);
+
+    return tr;
+  }
+
+  async function refresh() {
+    let slos;
+    try {
+      slos = await fetchJSON('/api/slos');
+    } catch (err) {
+      console.error('failed to load /api/slos', err);
+      return;
+    }
+
+    lastSlos = Array.isArray(slos) ? slos : [];
+    const tbody = document.querySelector('#slo-table tbody');
+    clearChildren(tbody);
+    for (const s of slos) {
+      if (!selected) selected = s.slo;
+      tbody.appendChild(buildSloRow(s));
+    }
+    tbody.querySelectorAll('a[data-slo]').forEach((a) => {
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        selected = a.dataset.slo;
+        drawForecast();
+      });
+    });
+
+    await drawForecast();
+    await drawAlerts();
+  }
+
+  async function drawForecast() {
+    if (!selected) return;
+    document.getElementById('sel').textContent = '- ' + selected;
+
+    let hist;
+    try {
+      hist = await fetchJSON('/api/slos/' + encodeURIComponent(selected) + '/history');
+    } catch (err) {
+      console.error('failed to load history for', selected, err);
+      return;
+    }
+
+    const labels = hist.map((h) => String(h.sampled_at).slice(11, 16));
+    const data = hist.map((h) => h.budget_remaining_pct);
+
+    const datasets = [{
+      label: 'budget remaining %',
+      data: data.slice(),
+      borderColor: '#58a6ff',
+      backgroundColor: 'rgba(88,166,255,.15)',
+      fill: true,
+      tension: 0.25,
+      spanGaps: false,
+    }];
+
+    // Forecast cone: project the selected SLO's budget line toward 0% at the
+    // predicted exhaustion time, with a shaded band between the lower and upper
+    // confidence bounds. All values come from /api/slos (numbers only).
+    const meta = lastSlos.find((x) => x.slo === selected);
+    const fh = meta && Number.isFinite(Number(meta.forecast_hours))
+      ? Number(meta.forecast_hours) : null;
+
+    if (fh !== null && fh > 0 && hist.length > 0) {
+      const lastIdx = data.length - 1;
+      const lastVal = num(data[lastIdx]);
+      const lastTime = new Date(String(hist[lastIdx].sampled_at));
+
+      const lo = meta && Number.isFinite(Number(meta.forecast_lower_hours))
+        ? Number(meta.forecast_lower_hours) : null;
+      const up = meta && Number.isFinite(Number(meta.forecast_upper_hours))
+        ? Number(meta.forecast_upper_hours) : null;
+
+      // Future label columns at the distinct projection horizons (hours).
+      const horizons = [fh];
+      if (lo !== null && lo > 0) horizons.push(lo);
+      if (up !== null && up > 0) horizons.push(up);
+      const futureHours = Array.from(new Set(horizons)).sort((a, b) => a - b);
+
+      const fmtHM = (d) => {
+        const hh = String(d.getUTCHours()).padStart(2, '0');
+        const mm = String(d.getUTCMinutes()).padStart(2, '0');
+        return hh + ':' + mm;
+      };
+      for (const f of futureHours) {
+        labels.push(fmtHM(new Date(lastTime.getTime() + f * 3600 * 1000)));
+      }
+
+      // A line declining linearly from lastVal (at the last real point) to 0 at
+      // horizon H hours; null across the historical region except the shared
+      // origin, then interpolated across every future column.
+      const nHist = data.length;
+      const proj = (H) => {
+        const arr = new Array(nHist).fill(null);
+        arr[lastIdx] = lastVal;
+        for (const f of futureHours) {
+          arr.push(H > 0 ? Math.max(0, lastVal * (1 - f / H)) : 0);
+        }
+        return arr;
+      };
+
+      if (lo !== null && lo > 0 && up !== null && up > 0) {
+        // Upper bound (latest exhaustion) then lower bound (earliest); the lower
+        // dataset fills up to the upper one to shade the cone.
+        datasets.push({
+          label: 'cone upper',
+          data: proj(up),
+          borderColor: 'rgba(210,153,34,.35)',
+          backgroundColor: 'rgba(210,153,34,.12)',
+          borderWidth: 1,
+          pointRadius: 0,
+          fill: false,
+          spanGaps: true,
+        });
+        datasets.push({
+          label: 'cone lower',
+          data: proj(lo),
+          borderColor: 'rgba(210,153,34,.35)',
+          backgroundColor: 'rgba(210,153,34,.12)',
+          borderWidth: 1,
+          pointRadius: 0,
+          fill: '-1',
+          spanGaps: true,
+        });
+      }
+
+      datasets.push({
+        label: 'forecast',
+        data: proj(fh),
+        borderColor: '#d29922',
+        borderDash: [6, 4],
+        borderWidth: 2,
+        pointRadius: 0,
+        fill: false,
+        spanGaps: true,
+      });
+    }
+
+    if (chart) chart.destroy();
+    chart = new Chart(document.getElementById('forecast'), {
+      type: 'line',
+      data: { labels, datasets },
+      options: { scales: { y: { min: 0, max: 100 } }, plugins: { legend: { display: false } } },
+    });
+  }
+
+  function buildAlertRow(a) {
+    const row = makeEl('div', { className: 'alert-row' });
+    row.appendChild(makeEl('span', { className: 'chip ' + chipClass(a.severity), text: a.severity }));
+    row.appendChild(document.createTextNode(' '));
+    row.appendChild(makeEl('b', { text: a.slo_name }));
+    row.appendChild(document.createTextNode(' - ' + fmt1(a.burn_rate) + 'x '));
+    row.appendChild(makeEl('span', {
+      className: 'muted',
+      text: String(a.fired_at).slice(0, 16).replace('T', ' '),
+    }));
+    if (a.probable_cause) {
+      row.appendChild(makeEl('span', { className: 'muted cause-line', text: a.probable_cause }));
+    }
+    return row;
+  }
+
+  async function drawAlerts() {
+    let alerts;
+    try {
+      alerts = await fetchJSON('/api/alerts');
+    } catch (err) {
+      console.error('failed to load /api/alerts', err);
+      return;
+    }
+
+    const container = document.getElementById('alerts');
+    clearChildren(container);
+    if (!alerts.length) {
+      container.appendChild(makeEl('span', { className: 'muted', text: 'No alerts.' }));
+      return;
+    }
+    for (const a of alerts) {
+      container.appendChild(buildAlertRow(a));
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 30000);
+})();
+</script>
+</body>
+</html>

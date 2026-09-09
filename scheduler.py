@@ -1,0 +1,151 @@
+import logging
+from datetime import UTC, datetime, timedelta
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from sqlalchemy import select
+
+from collectors.base import MetricsSource
+from config.slos import SLODefinition
+from correlate.correlator import correlate
+from db.models import AlertEvent, BurnRateSample, CorrelationEvent
+from engine.burn_rate import budget_remaining_pct, compute_burn_rate
+from engine.forecaster import ExhaustionForecaster
+from events.base import ChangeEventStore
+from outputs.notify import Notification, send
+from outputs.postmortem import render_postmortem, write_postmortem
+
+logger = logging.getLogger(__name__)
+
+
+async def evaluate_slo(
+    slo: SLODefinition,
+    source: MetricsSource,
+    session_factory,
+    event_store: ChangeEventStore,
+    *,
+    notify_webhook_url: str | None = None,
+    slack_webhook_url: str | None = None,
+    postmortem_dir: str | None = None,
+) -> dict:
+    now = datetime.now(UTC)
+    series_1h = await source.query_range(slo.metric_query, now - timedelta(hours=1), now, 300)
+    good_1h = [v for _, v in series_1h]
+    if not good_1h:
+        instant = await _instant(source, slo)
+        if instant is not None:
+            good_1h = [instant]
+    good_1h = [g for g in good_1h if g is not None]
+
+    # Fail closed on missing data: an SLI that returns no series must NOT read as
+    # 100% healthy. Skip the sample entirely (no persistence, no alert) and mark
+    # the result "no_data" so the caller/dashboard can show it as stale, not green.
+    if not good_1h:
+        logger.warning("no data for SLO %s, skipping sample", slo.name)
+        return {
+            "slo": slo.name, "service": slo.service, "status": "no_data",
+            "budget_remaining_pct": None, "burn_rate_1h": None, "burn_rate_6h": None,
+            "forecast_hours": None, "forecast_lower_hours": None,
+            "forecast_upper_hours": None, "forecast_model": None,
+            "forecast_confidence": None, "latest_good": None,
+            "severity": None, "probable_cause": None, "probable_cause_type": None,
+        }
+
+    latest_good = good_1h[-1]
+    burn_1h = compute_burn_rate(sum(good_1h) / len(good_1h), slo.target_percent)
+    series_6h = await source.query_range(slo.metric_query, now - timedelta(hours=6), now, 300)
+    good_6h = [v for _, v in series_6h] or good_1h
+    burn_6h = compute_burn_rate(sum(good_6h) / len(good_6h), slo.target_percent)
+    # NOTE: v1 approximates error-budget-remaining from this recent rolling window
+    # (~6h), not the full declared slo.window_days horizon. A fuller windowed
+    # budget is planned; see README "How it works".
+    budget = budget_remaining_pct(good_6h, slo.target_percent)
+
+    async with session_factory() as s:
+        s.add(BurnRateSample(slo_name=slo.name, service=slo.service,
+                             budget_remaining_pct=budget, burn_rate_1h=burn_1h,
+                             burn_rate_6h=burn_6h, sampled_at=now))
+        await s.commit()
+        recent = (await s.execute(
+            select(BurnRateSample).where(BurnRateSample.slo_name == slo.name)
+            .order_by(BurnRateSample.sampled_at.desc()).limit(24)
+        )).scalars().all()
+
+    forecast = ExhaustionForecaster.forecast(list(reversed(recent)))
+    forecast_hours = forecast.point_estimate_hours if forecast else None
+    forecast_lower_hours = forecast.lower_ci_hours if forecast else None
+    forecast_upper_hours = forecast.upper_ci_hours if forecast else None
+    forecast_model = forecast.model_used if forecast else None
+    forecast_confidence = forecast.confidence_score if forecast else None
+
+    out = {
+        "slo": slo.name, "service": slo.service, "status": "ok",
+        "budget_remaining_pct": budget,
+        "burn_rate_1h": burn_1h, "burn_rate_6h": burn_6h,
+        "forecast_hours": forecast_hours,
+        "forecast_lower_hours": forecast_lower_hours,
+        "forecast_upper_hours": forecast_upper_hours,
+        "forecast_model": forecast_model, "forecast_confidence": forecast_confidence,
+        "latest_good": latest_good,
+        "severity": None, "probable_cause": None, "probable_cause_type": None,
+    }
+
+    severity = None
+    if burn_1h >= slo.critical_burn_rate:
+        severity = "critical"
+    elif burn_1h >= slo.warning_burn_rate:
+        severity = "warning"
+    if severity is None:
+        return out
+
+    async with session_factory() as s:
+        alert = AlertEvent(slo_name=slo.name, service=slo.service,
+                           severity=severity, burn_rate=burn_1h, fired_at=now)
+        s.add(alert)
+        await s.commit()
+        alert_id = alert.id
+
+    changes = await event_store.recent_for_service(
+        slo.service, now - timedelta(minutes=30), now + timedelta(minutes=5))
+    corr = correlate(changes, now)
+    out.update(severity=severity, probable_cause=corr.probable_cause,
+               probable_cause_type=corr.probable_cause_type)
+
+    async with session_factory() as s:
+        for e in corr.events[:3]:
+            s.add(CorrelationEvent(alert_event_id=alert_id, event_time=e["time"],
+                                   event_type=e["type"], source_system=e["source"],
+                                   description=e["description"], score=e["final_score"]))
+        await s.commit()
+
+    notification = Notification(slo.name, slo.service, severity, burn_1h, budget,
+                                forecast_hours, corr.probable_cause)
+    await send(notification, webhook_url=notify_webhook_url, slack_webhook_url=slack_webhook_url)
+
+    if severity == "critical" and postmortem_dir:
+        md = render_postmortem(slo.name, slo.service, severity, burn_1h, budget,
+                               forecast_hours, corr)
+        write_postmortem(md, postmortem_dir, slo.name, now)
+
+    return out
+
+
+async def _instant(source, slo):
+    try:
+        return await source.query_instant(slo.metric_query)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def run_scheduler(slos, job, poll_interval_seconds: int) -> AsyncIOScheduler:
+    """Build an AsyncIOScheduler that runs `job(slo)` for each SLO on an interval.
+
+    `job` is an async callable taking a single SLODefinition; the caller wires in
+    the source/session/event_store/notification config it needs.
+    """
+    scheduler = AsyncIOScheduler(timezone="UTC")
+    for slo in slos:
+        scheduler.add_job(
+            job, "interval", seconds=poll_interval_seconds, args=[slo],
+            id=f"eval:{slo.name}", max_instances=1, coalesce=True,
+        )
+    return scheduler

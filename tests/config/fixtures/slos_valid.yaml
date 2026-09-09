@@ -1,0 +1,9 @@
+slos:
+  - name: "Resume - Availability"
+    service: "resume"
+    target_percent: 99.0
+    window_days: 30
+    metric_query: "avg_over_time(probe_success{instance='https://about.ngatia.me'}[5m])"
+    alert_thresholds:
+      warning_burn_rate: 2.0
+      critical_burn_rate: 10.0
