@@ -18,9 +18,26 @@ It reads any Prometheus-compatible source (self-hosted Prometheus, Mimir,
 Thanos, Amazon Managed Prometheus, Grafana Cloud), runs as a single container,
 and needs no database to get started.
 
-> Status: revival in progress. This README describes the target v1. See
-> [`CONTEXT.md`](CONTEXT.md) for the domain glossary and
-> [`docs/adr/`](docs/adr) for the key design decisions.
+> **Status:** v1 is merged. See [`CONTEXT.md`](CONTEXT.md) for the domain
+> glossary and [`docs/adr/`](docs/adr) for the key design decisions.
+
+## Demo
+
+Run it yourself in about two minutes with [`make demo`](#try-the-demo), or see
+it in action below. The demo drives a mock Prometheus whose SLI degrades over a
+time-compressed arc and injects a `deploy` change event, so you can watch the
+whole pipeline react.
+
+**1. The error budget declines, and the exhaustion forecast projects when it hits zero (the cone):**
+
+![Forecast cone: the budget-remaining line declines and a dashed projection extends to zero](docs/images/dashboard-forecast-cone.png)
+
+**2. The burn rate crosses critical, an alert fires, and it names the probable cause - the injected deploy:**
+
+![Alert feed showing a critical burn and the probable cause "deploy demo v9 (bad release)"](docs/images/dashboard-alert-correlation.png)
+
+*(The demo is time-accelerated, so the forecast reads ~0h; against real metrics
+the exhaustion horizon is typically hours to days.)*
 
 ## Why not just Grafana / Datadog / Nobl9?
 
