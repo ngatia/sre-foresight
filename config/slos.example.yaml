@@ -11,9 +11,9 @@
 # threshold_seconds is OPTIONAL and purely advisory/display metadata; v1 does
 # NOT compare any query against it. Keep the threshold inside the ratio query.
 #
-# NOTE: window_days is the intended SLO horizon, but v1 approximates the
-# remaining error budget from a recent rolling window (~6h), not the full
-# window_days span. See README "How it works".
+# window_days is the SLO horizon: the remaining error budget is computed over
+# this full span (a server-side avg_over_time subquery). See README "How it
+# works".
 slos:
   - name: "Example - Availability"
     service: "example"
