@@ -1,4 +1,5 @@
 import logging
+import math
 from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -32,7 +33,7 @@ async def evaluate_slo(
     series_1h = await source.query_range(slo.metric_query, now - timedelta(hours=1), now, 300)
     good_1h = [v for _, v in series_1h]
     if not good_1h:
-        instant = await _instant(source, slo)
+        instant = await _instant(source, slo.metric_query)
         if instant is not None:
             good_1h = [instant]
     good_1h = [g for g in good_1h if g is not None]
@@ -56,10 +57,26 @@ async def evaluate_slo(
     series_6h = await source.query_range(slo.metric_query, now - timedelta(hours=6), now, 300)
     good_6h = [v for _, v in series_6h] or good_1h
     burn_6h = compute_burn_rate(sum(good_6h) / len(good_6h), slo.target_percent)
-    # NOTE: v1 approximates error-budget-remaining from this recent rolling window
-    # (~6h), not the full declared slo.window_days horizon. A fuller windowed
-    # budget is planned; see README "How it works".
-    budget = budget_remaining_pct(good_6h, slo.target_percent)
+
+    # budget_remaining_pct reflects the full declared slo.window_days horizon,
+    # not the short 1h/6h windows above (those stay dedicated alerting
+    # signals). A single server-side subquery averages the good-ratio over
+    # the whole window so a brief blip is diluted rather than zeroing the
+    # budget: keep the inner subquery resolution coarse (>=5m, <=~720 steps)
+    # so Prometheus/Grafana Cloud can evaluate it as one instant query.
+    res_seconds = max(300, math.ceil(slo.window_days * 86400 / 720))
+    budget_query = (
+        f"avg_over_time(({slo.metric_query})[{slo.window_days}d:{_prom_duration(res_seconds)}])"
+    )
+    good_window = await _instant(source, budget_query)
+    if good_window is not None:
+        budget = budget_remaining_pct([good_window], slo.target_percent)
+    else:
+        logger.debug(
+            "budget subquery returned no data for SLO %s, falling back to "
+            "6h window average", slo.name,
+        )
+        budget = budget_remaining_pct(good_6h, slo.target_percent)
 
     async with session_factory() as s:
         s.add(BurnRateSample(slo_name=slo.name, service=slo.service,
@@ -158,11 +175,21 @@ async def evaluate_slo(
     return out
 
 
-async def _instant(source, slo):
+async def _instant(source, promql: str) -> float | None:
     try:
-        return await source.query_instant(slo.metric_query)
+        return await source.query_instant(promql)
     except Exception:  # noqa: BLE001
         return None
+
+
+def _prom_duration(seconds: int) -> str:
+    """Format a whole number of seconds as a Prometheus duration string,
+    using the coarsest unit that divides it evenly (e.g. 3600 -> "1h")."""
+    if seconds % 3600 == 0:
+        return f"{seconds // 3600}h"
+    if seconds % 60 == 0:
+        return f"{seconds // 60}m"
+    return f"{seconds}s"
 
 
 def run_scheduler(slos, job, poll_interval_seconds: int) -> AsyncIOScheduler:

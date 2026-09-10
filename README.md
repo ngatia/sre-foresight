@@ -80,11 +80,12 @@ Every SLO is evaluated on a fixed loop, once per `POLL_INTERVAL_SECONDS`
    1-hour and 6-hour ranges on the configured Prometheus-compatible source, to
    get a recent "fraction good" ratio.
 2. **Compute burn rate and budget.** The 1h and 6h ratios are converted into
-   multi-window burn rates against `target_percent`, and the remaining error
-   budget (as a percentage) is computed from the 6h window. Note: v1
-   approximates error-budget-remaining from this recent rolling window (~6h),
-   not the full declared `window_days` horizon; a fuller windowed budget over
-   the whole `window_days` span is planned.
+   multi-window burn rates against `target_percent` - these stay short-window
+   alerting signals. The remaining error budget (as a percentage) is computed
+   separately, over the SLO's full declared `window_days` horizon: a single
+   server-side `avg_over_time(...)[window_days:res]` subquery gets the
+   window-average good ratio in one instant query, so a brief blip is diluted
+   across the whole window instead of dominating a short rolling average.
 3. **Persist a sample.** The budget and burn rates are written to the
    `BurnRateSample` table, timestamped, so history accumulates run over run.
 4. **Forecast exhaustion.** The last 24 samples for that SLO are fit with both
@@ -176,9 +177,9 @@ latency value. `threshold_seconds` is an optional advisory/display field only;
 v1 does not compare any query against it, so keep the threshold inside the
 ratio query itself.
 
-`window_days` records the intended SLO horizon, but as noted in
-[How it works](#how-it-works) v1 approximates the remaining error budget from a
-recent rolling window rather than the full `window_days` span.
+`window_days` sets the SLO horizon and, as described in
+[How it works](#how-it-works), is the exact window the remaining error budget
+is averaged over (via a server-side subquery), not an approximation.
 
 Everything below is set via environment variables (see `.env.example`) when
 running directly or with `docker compose`, or via the equivalent Helm value

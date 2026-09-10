@@ -30,6 +30,35 @@ class VariableSource:
         n = 12
         return [(start + timedelta(minutes=5*i), self.good) for i in range(n)]
 
+class RecordingSource:
+    """Records every query it's asked. `range_good` backs the 1h/6h range
+    queries; `instant_value` backs the window-average budget instant query
+    (and the no-data instant fallback, which these tests never exercise since
+    range queries always return data)."""
+    def __init__(self, range_good, instant_value):
+        self._range_good = range_good
+        self._instant_value = instant_value
+        self.instant_queries: list[str] = []
+        self.range_queries: list[str] = []
+
+    async def query_instant(self, q):
+        self.instant_queries.append(q)
+        return self._instant_value
+
+    async def query_range(self, q, start, end, step):
+        self.range_queries.append(q)
+        n = 12
+        return [(start + timedelta(minutes=5*i), self._range_good) for i in range(n)]
+
+class FallbackSource:
+    """Budget instant query returns None (e.g. a metrics gap); range queries
+    still have data, so evaluation must not crash and must fall back to the
+    6h window average for the budget."""
+    async def query_instant(self, q): return None
+    async def query_range(self, q, start, end, step):
+        n = 12
+        return [(start + timedelta(minutes=5*i), 1.0) for i in range(n)]
+
 SLO = SLODefinition("Resume - Availability", "resume", 99.0, 30,
                     "q", warning_burn_rate=2.0, critical_burn_rate=10.0)
 
@@ -146,3 +175,53 @@ async def test_state_transitions_fire_dedupe_and_recover(db, monkeypatch):
         alerts = (await s.execute(select(AlertEvent))).scalars().all()
     assert len(alerts) == 2
     assert len(sent) == 3
+
+
+async def test_budget_query_is_a_window_aligned_subquery(db):
+    # budget_remaining_pct must be computed from a single server-side
+    # avg_over_time(...)[window_days:res] subquery over the SLO's declared
+    # window, not the 6h range used for burn_rate_6h.
+    store = ChangeEventStore(db)
+    source = RecordingSource(range_good=1.0, instant_value=1.0)
+    await sched.evaluate_slo(SLO, source, db, store)  # SLO.window_days == 30
+    assert len(source.instant_queries) == 1
+    q = source.instant_queries[0]
+    assert q.startswith("avg_over_time(")
+    assert "[30d:" in q
+
+async def test_budget_reflects_full_window_average_not_a_brief_blip(db):
+    # KEY test: a window-average of 0.9999 (a brief 5-min blip diluted over
+    # 30 days) must leave ~90% of the budget, not zero it - proving the fix
+    # for the flapping caused by the old 6h-average approximation.
+    store = ChangeEventStore(db)
+
+    healthy = RecordingSource(range_good=1.0, instant_value=1.0)
+    out = await sched.evaluate_slo(SLO, healthy, db, store)
+    assert out["budget_remaining_pct"] == 100.0
+
+    slo_999 = SLODefinition("x", "resume", 99.9, 30, "q")
+    exhausted = RecordingSource(range_good=1.0, instant_value=0.999)
+    out = await sched.evaluate_slo(slo_999, exhausted, db, store)
+    assert out["budget_remaining_pct"] == 0.0
+
+    blip_diluted = RecordingSource(range_good=1.0, instant_value=0.9999)
+    out = await sched.evaluate_slo(slo_999, blip_diluted, db, store)
+    assert out["budget_remaining_pct"] == pytest.approx(90.0, abs=1.0)
+
+async def test_burn_rate_1h_still_comes_from_1h_range_unaffected_by_budget(db):
+    # burn_rate_1h/6h are short-window alerting signals and must stay exactly
+    # as before: derived from the 1h/6h range queries, independent of the
+    # window-average budget query's result.
+    store = ChangeEventStore(db)
+    source = RecordingSource(range_good=1.0, instant_value=0.5)
+    out = await sched.evaluate_slo(SLO, source, db, store)
+    assert out["burn_rate_1h"] == 0.0
+    assert out["severity"] is None
+
+async def test_budget_falls_back_to_6h_window_when_subquery_has_no_data(db):
+    # A metrics gap on the budget subquery (query_instant -> None) must not
+    # crash evaluation; it falls back to the existing 6h good-ratio average.
+    store = ChangeEventStore(db)
+    out = await sched.evaluate_slo(SLO, FallbackSource(), db, store)
+    assert out["status"] == "ok"
+    assert out["budget_remaining_pct"] == 100.0
