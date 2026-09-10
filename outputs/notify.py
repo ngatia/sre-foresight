@@ -49,9 +49,14 @@ def _log_webhook_failure(label: str, url: str, e: Exception) -> None:
 
 
 def _slack_text(n: Notification) -> str:
+    safe_slo_name = _mrkdwn_escape(n.slo_name)
+    if n.severity == "resolved":
+        return (
+            f":white_check_mark: *RECOVERED* SLO burn on *{safe_slo_name}* is back to OK\n"
+            f"• burn rate: {n.burn_rate:.1f}x, budget remaining: {n.budget_remaining_pct:.1f}%"
+        )
     eta = f"~{n.forecast_hours:.1f}h to exhaustion" if n.forecast_hours else "no exhaustion trend"
     safe_severity = _mrkdwn_escape(n.severity)
-    safe_slo_name = _mrkdwn_escape(n.slo_name)
     safe_cause = _mrkdwn_escape(n.probable_cause.replace("\r", "").replace("\n", ""))
     return (
         f":rotating_light: *{safe_severity.upper()}* SLO burn on *{safe_slo_name}*\n"
