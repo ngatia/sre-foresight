@@ -26,6 +26,7 @@ async def evaluate_slo(
     notify_webhook_url: str | None = None,
     slack_webhook_url: str | None = None,
     postmortem_dir: str | None = None,
+    alert_state: dict | None = None,
 ) -> dict:
     now = datetime.now(UTC)
     series_1h = await source.query_range(slo.metric_query, now - timedelta(hours=1), now, 300)
@@ -87,6 +88,7 @@ async def evaluate_slo(
         "forecast_model": forecast_model, "forecast_confidence": forecast_confidence,
         "latest_good": latest_good,
         "severity": None, "probable_cause": None, "probable_cause_type": None,
+        "alerted": False,
     }
 
     severity = None
@@ -94,37 +96,64 @@ async def evaluate_slo(
         severity = "critical"
     elif burn_1h >= slo.warning_burn_rate:
         severity = "warning"
+
+    # `alert_state` is a mutable {slo_name: last_severity} map the caller owns
+    # and persists across polls, so we can tell a real state transition (e.g.
+    # None->critical) apart from the same severity repeating on every poll of
+    # an ongoing incident. When the caller doesn't pass one (e.g. existing
+    # tests/callers), `prev` is always None so behaviour stays exactly as
+    # before: alert on every poll where a threshold is crossed.
+    prev = alert_state.get(slo.name) if alert_state is not None else None
+
     if severity is None:
+        out["severity"] = None
+        if alert_state is not None and prev is not None:
+            # Recovered: burn dropped back under warning after having alerted.
+            # Send one recovery notification; no AlertEvent, no correlation.
+            notification = Notification(slo.name, slo.service, "resolved", burn_1h,
+                                        budget, forecast_hours, "")
+            await send(notification, webhook_url=notify_webhook_url,
+                      slack_webhook_url=slack_webhook_url)
+        if alert_state is not None:
+            alert_state[slo.name] = severity
         return out
 
-    async with session_factory() as s:
-        alert = AlertEvent(slo_name=slo.name, service=slo.service,
-                           severity=severity, burn_rate=burn_1h, fired_at=now)
-        s.add(alert)
-        await s.commit()
-        alert_id = alert.id
+    out["severity"] = severity
+    should_fire = severity != prev
 
-    changes = await event_store.recent_for_service(
-        slo.service, now - timedelta(minutes=30), now + timedelta(minutes=5))
-    corr = correlate(changes, now)
-    out.update(severity=severity, probable_cause=corr.probable_cause,
-               probable_cause_type=corr.probable_cause_type)
+    if should_fire:
+        async with session_factory() as s:
+            alert = AlertEvent(slo_name=slo.name, service=slo.service,
+                               severity=severity, burn_rate=burn_1h, fired_at=now)
+            s.add(alert)
+            await s.commit()
+            alert_id = alert.id
 
-    async with session_factory() as s:
-        for e in corr.events[:3]:
-            s.add(CorrelationEvent(alert_event_id=alert_id, event_time=e["time"],
-                                   event_type=e["type"], source_system=e["source"],
-                                   description=e["description"], score=e["final_score"]))
-        await s.commit()
+        changes = await event_store.recent_for_service(
+            slo.service, now - timedelta(minutes=30), now + timedelta(minutes=5))
+        corr = correlate(changes, now)
+        out.update(probable_cause=corr.probable_cause,
+                   probable_cause_type=corr.probable_cause_type, alerted=True)
 
-    notification = Notification(slo.name, slo.service, severity, burn_1h, budget,
-                                forecast_hours, corr.probable_cause)
-    await send(notification, webhook_url=notify_webhook_url, slack_webhook_url=slack_webhook_url)
+        async with session_factory() as s:
+            for e in corr.events[:3]:
+                s.add(CorrelationEvent(alert_event_id=alert_id, event_time=e["time"],
+                                       event_type=e["type"], source_system=e["source"],
+                                       description=e["description"], score=e["final_score"]))
+            await s.commit()
 
-    if severity == "critical" and postmortem_dir:
-        md = render_postmortem(slo.name, slo.service, severity, burn_1h, budget,
-                               forecast_hours, corr)
-        write_postmortem(md, postmortem_dir, slo.name, now)
+        notification = Notification(slo.name, slo.service, severity, burn_1h, budget,
+                                    forecast_hours, corr.probable_cause)
+        await send(notification, webhook_url=notify_webhook_url,
+                  slack_webhook_url=slack_webhook_url)
+
+        if severity == "critical" and postmortem_dir:
+            md = render_postmortem(slo.name, slo.service, severity, burn_1h, budget,
+                                   forecast_hours, corr)
+            write_postmortem(md, postmortem_dir, slo.name, now)
+
+    if alert_state is not None:
+        alert_state[slo.name] = severity
 
     return out
 

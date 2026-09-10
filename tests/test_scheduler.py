@@ -22,6 +22,14 @@ class NoDataSource:
     async def query_instant(self, q): return None
     async def query_range(self, q, start, end, step): return []
 
+class VariableSource:
+    """Good ratio can be changed between polls to simulate state transitions."""
+    def __init__(self, good): self.good = good
+    async def query_instant(self, q): return self.good
+    async def query_range(self, q, start, end, step):
+        n = 12
+        return [(start + timedelta(minutes=5*i), self.good) for i in range(n)]
+
 SLO = SLODefinition("Resume - Availability", "resume", 99.0, 30,
                     "q", warning_burn_rate=2.0, critical_burn_rate=10.0)
 
@@ -70,3 +78,71 @@ async def test_burning_slo_fires_alert_and_correlates(db, monkeypatch):
     assert len(alerts) == 1 and alerts[0].severity == "critical"
     assert out["probable_cause_type"] == "deploy"
     assert "resume v2" in sent["n"].probable_cause
+
+
+async def test_consecutive_criticals_alert_once_with_shared_state(db, monkeypatch):
+    # A single ongoing incident polled 3x at the same severity must create
+    # exactly one AlertEvent and send exactly one notification, not one per poll.
+    store = ChangeEventStore(db)
+    sent = []
+    async def fake_send(n, **kw): sent.append(n)
+    monkeypatch.setattr(sched, "send", fake_send)
+
+    alert_state: dict = {}
+    source = VariableSource(0.80)  # 20x burn -> critical
+    for _ in range(3):
+        out = await sched.evaluate_slo(SLO, source, db, store, alert_state=alert_state)
+        assert out["severity"] == "critical"
+
+    async with db() as s:
+        alerts = (await s.execute(select(AlertEvent))).scalars().all()
+    assert len(alerts) == 1
+    assert len(sent) == 1
+
+
+async def test_state_transitions_fire_dedupe_and_recover(db, monkeypatch):
+    store = ChangeEventStore(db)
+    sent = []
+    async def fake_send(n, **kw): sent.append(n)
+    monkeypatch.setattr(sched, "send", fake_send)
+
+    alert_state: dict = {}
+    source = VariableSource(0.80)  # critical
+
+    # None -> critical: fires
+    out = await sched.evaluate_slo(SLO, source, db, store, alert_state=alert_state)
+    assert out["severity"] == "critical"
+    assert out["alerted"] is True
+
+    # critical -> critical: does not re-fire
+    out = await sched.evaluate_slo(SLO, source, db, store, alert_state=alert_state)
+    assert out["severity"] == "critical"
+    assert out["alerted"] is False
+
+    async with db() as s:
+        alerts = (await s.execute(select(AlertEvent))).scalars().all()
+    assert len(alerts) == 1
+    assert len(sent) == 1
+
+    # critical -> None: sends a recovery notification, no new AlertEvent
+    source.good = 1.0
+    out = await sched.evaluate_slo(SLO, source, db, store, alert_state=alert_state)
+    assert out["severity"] is None
+    assert out["alerted"] is False
+
+    async with db() as s:
+        alerts = (await s.execute(select(AlertEvent))).scalars().all()
+    assert len(alerts) == 1
+    assert len(sent) == 2
+    assert sent[-1].severity == "resolved"
+
+    # None -> critical again (post-recovery): fires again
+    source.good = 0.80
+    out = await sched.evaluate_slo(SLO, source, db, store, alert_state=alert_state)
+    assert out["severity"] == "critical"
+    assert out["alerted"] is True
+
+    async with db() as s:
+        alerts = (await s.execute(select(AlertEvent))).scalars().all()
+    assert len(alerts) == 2
+    assert len(sent) == 3

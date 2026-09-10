@@ -91,14 +91,21 @@ Every SLO is evaluated on a fixed loop, once per `POLL_INTERVAL_SECONDS`
    a linear and an exponential-decay model (whichever fits better, by R^2);
    if the budget trend is downward, this yields a point estimate (and interval)
    of hours until the budget hits zero.
-5. **On threshold, correlate and notify.** If the 1h burn rate crosses
-   `warning_burn_rate` or `critical_burn_rate`, an `AlertEvent` is recorded,
-   change events for that service in the last 30 minutes (see
-   [Change events / webhook](#change-events--webhook) below) are scored by
-   proximity to the spike and weighted toward deploys, and the closest match
-   becomes the "probable cause." A notification is sent to any configured
-   webhook and/or Slack webhook. On a **critical** alert, if `POSTMORTEM_DIR`
-   is set, a Markdown postmortem draft is also written there.
+5. **On a state transition, correlate and notify.** Alerts fire on state
+   transitions only, deduped against an in-memory `{slo: last_severity}` map
+   kept for the life of the process: crossing into `warning_burn_rate` or
+   `critical_burn_rate` (including moving between the two) records an
+   `AlertEvent` and sends a notification, but repeated polls at the same
+   severity during an ongoing incident do not create duplicate alerts. When
+   the 1h burn rate crosses a threshold, change events for that service in
+   the last 30 minutes (see [Change events / webhook](#change-events--webhook)
+   below) are scored by proximity to the spike and weighted toward deploys,
+   and the closest match becomes the "probable cause." A notification is sent
+   to any configured webhook and/or Slack webhook. On a **critical** alert,
+   if `POSTMORTEM_DIR` is set, a Markdown postmortem draft is also written
+   there. When the burn rate later drops back under `warning_burn_rate`, a
+   single recovery notification is sent (no new `AlertEvent`, no
+   postmortem) so the on-call channel sees the incident close out.
 
 The dashboard (served at `/`) and the read-only API poll the same state that
 this loop produces - budgets, burn rates, forecasts, alerts, and the

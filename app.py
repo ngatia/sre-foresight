@@ -40,6 +40,12 @@ def build() -> FastAPI:
     )
     event_store = ChangeEventStore(session_factory)
     latest_state: dict = {}
+    # Per-SLO last-seen severity, shared across polls, so evaluate_slo can
+    # alert on state transitions instead of on every poll that crosses a
+    # threshold. Single-replica in-memory state: fine for this app's
+    # single-scheduler deployment model, lost on restart (worst case: one
+    # re-alert after a redeploy).
+    alert_state: dict = {}
 
     async def _eval_and_record(slo):
         result = await evaluate_slo(
@@ -47,6 +53,7 @@ def build() -> FastAPI:
             notify_webhook_url=settings.notify_webhook_url,
             slack_webhook_url=settings.slack_webhook_url,
             postmortem_dir=settings.postmortem_dir,
+            alert_state=alert_state,
         )
         latest_state[slo.name] = result
 
